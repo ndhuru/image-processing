@@ -11,7 +11,7 @@ from lane_detection import pipeline  # Importing the pipeline function
 with open("temp_username.txt", "r") as temp_file:
     username = temp_file.read().strip()
 
-
+# Defines the whole gui 
 class RobotControlApp:
     def __init__(self, root):
         self.root = root
@@ -105,6 +105,8 @@ class RobotControlApp:
             self.root.after(10)
         cap.release()
 
+
+    # Function to begin video streams, using RGB, etc.
     def start_video_stream(self):
         cap = cv2.VideoCapture("http://127.0.0.1:2345/video_feed")  # REPLACE WITH URL TO CAMERA
         while True:
@@ -119,10 +121,11 @@ class RobotControlApp:
             self.root.after(10)
         cap.release()
 
+    # Sends command to identify what the username is
     def send_command(self, command):
         self.user_log.log_action(command)
         threading.Thread(target=self.send_request, args=(command,)).start()
-
+    # Sends command to API
     def send_request(self, command):
         api_url = "http://localhost:4444/control"
         payload = {"command": command}
@@ -135,7 +138,7 @@ class RobotControlApp:
         except requests.RequestException as e:
             print(f"Error sending command: {e}")
 
-
+# Main loop
 if __name__ == '__main__':
    root = tk.Tk()
    app = RobotControlApp(root)
