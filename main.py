@@ -1,194 +1,98 @@
-import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
-import numpy as np
-import cv2
-import math
+import tkinter as tk
+from login import initialize_database, newUser, loginUser, displayAllUsers, close_database
 
+# create the main application window
+root = tk.Tk()
+root.geometry("900x600")
+root.title("Login thing")
 
-def region_of_interest(img, vertices):
-    mask = np.zeros_like(img)
-    match_mask_color = 255
-    cv2.fillPoly(mask, vertices, match_mask_color)
-    masked_image = cv2.bitwise_and(img, mask)
-    return masked_image
+# initialize the database connection and cursor
+conn, cursor = initialize_database()
 
+def signupMaker():
+    def signup():
+        username = username_entry.get()
+        password = password_entry.get()
+        first_name = first_name_entry.get()
+        last_name = last_name_entry.get()
+        newUser(conn, cursor, username, password, first_name, last_name)
+        signup_window.destroy()
 
-def draw_lines(img, lines, thickness=5, outer_color=[255, 0, 255]):
-    line_img = np.zeros(
-        (
-            img.shape[0],
-            img.shape[1],
-            3
-        ),
-        dtype=np.uint8
-    )
-    img = np.copy(img)
-    if lines is None:
-        return
-    for line in lines:
-        for x1, y1, x2, y2 in line:
-            if x2 == x1:
-                continue  # Skip lines with zero denominator
-            slope = (y2 - y1) / (x2 - x1)
-            if math.fabs(slope) < 0.5:
-                continue
-            if slope <= 0:
-                cv2.line(line_img, (x1, y1), (x2, y2), outer_color, thickness)
-            else:
-                cv2.line(line_img, (x1, y1), (x2, y2), outer_color, thickness)
-    img = cv2.addWeighted(img, 0.8, line_img, 1.0, 0.0)
-    return img
+    signup_window = tk.Toplevel(root)
 
+    username_label = tk.Label(signup_window, text="Username:")
+    username_label.pack()
+    username_entry = tk.Entry(signup_window)
+    username_entry.pack()
 
-def pipeline(image):
-    height = image.shape[0]
-    width = image.shape[1]
-    region_of_interest_vertices = [
-        (0, height),
-        (width / 2, height / 2),
-        (width, height),
-    ]
-    gray_image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-    cannyed_image = cv2.Canny(gray_image, 100, 200)
-    cropped_image = region_of_interest(
-        cannyed_image,
-        np.array(
-            [region_of_interest_vertices],
-            np.int32
-        ),
-    )
-    lines = cv2.HoughLinesP(
-        cropped_image,
-        rho=6,
-        theta=np.pi / 60,
-        threshold=160,
-        lines=np.array([]),
-        minLineLength=40,
-        maxLineGap=25
-    )
+    password_label = tk.Label(signup_window, text="Password:")
+    password_label.pack()
+    password_entry = tk.Entry(signup_window)
+    password_entry.pack()
 
-    # Apply Gaussian blur to grayscale image
-    gray_image = cv2.GaussianBlur(gray_image, (5, 5), 0)
+    first_name_label = tk.Label(signup_window, text="First Name:")
+    first_name_label.pack()
+    first_name_entry = tk.Entry(signup_window)
+    first_name_entry.pack()
 
-    # Calculate dynamic Canny thresholds
-    median_intensity = np.median(gray_image)
-    lower_threshold = int(max(0, 0.7 * median_intensity))
-    upper_threshold = int(min(255, 1.3 * median_intensity))
-    cannyed_image = cv2.Canny(gray_image, lower_threshold, upper_threshold)
+    last_name_label = tk.Label(signup_window, text="Last Name:")
+    last_name_label.pack()
+    last_name_entry = tk.Entry(signup_window)
+    last_name_entry.pack()
 
-    if lines is None:
-        return image  # Return original image if no lines detected
+    signup_button = tk.Button(signup_window, text="Sign Up", command=signup)
+    signup_button.pack()
 
-    left_line_x = []
-    left_line_y = []
-    right_line_x = []
-    right_line_y = []
-    for line in lines:
-        for x1, y1, x2, y2 in line:
-            slope = (y2 - y1) / (x2 - x1)
-            if math.fabs(slope) < 0.5:
-                continue
-            if slope <= 0:
-                left_line_x.extend([x1, x2])
-                left_line_y.extend([y1, y2])
-            else:
-                right_line_x.extend([x1, x2])
-                right_line_y.extend([y1, y2])
+def loginMode():
+    def login():
+        username = username_entry.get()
+        password = password_entry.get()
+        loginUser(conn, cursor, username, password)
+        login_window.destroy()
 
-    min_y = int(image.shape[0] * (3 / 5))
-    max_y = int(image.shape[0])
-    if left_line_x and left_line_y:
-        poly_left = np.poly1d(np.polyfit(
-            left_line_y,
-            left_line_x,
-            deg=1
-        ))
-        left_x_start = int(poly_left(max_y))
-        left_x_end = int(poly_left(min_y))
-    else:
-        left_x_start = left_x_end = 0
+    login_window = tk.Toplevel(root)
 
-    if right_line_x and right_line_y:
-        poly_right = np.poly1d(np.polyfit(
-            right_line_y,
-            right_line_x,
-            deg=1
-        ))
-        right_x_start = int(poly_right(max_y))
-        right_x_end = int(poly_right(min_y))
-    else:
-        right_x_start = right_x_end = 0
+    username_label = tk.Label(login_window, text="Username:")
+    username_label.pack()
+    username_entry = tk.Entry(login_window)
+    username_entry.pack()
 
-    # Calculate centerline coordinates and angle
-    if left_line_x and right_line_x:
-        center_x_start = (left_x_start + right_x_start) // 2
-        center_x_end = (left_x_end + right_x_end) // 2
-        # Calculate angle of the centerline
-        centerline_angle = np.arctan2(min_y - max_y, center_x_end - center_x_start) * 180 / np.pi
-    else:
-        # Default centerline to face 90 degrees if only one outer line is detected
-        center_x_start = width // 2
-        center_x_end = width // 2
-        centerline_angle = 90
+    password_label = tk.Label(login_window, text="Password:")
+    password_label.pack()
+    password_entry = tk.Entry(login_window)
+    password_entry.pack()
 
-    if centerline_angle < 0:
-        centerline_angle += 180  # Convert negative angles to positive range [0, 180]
+    login_button = tk.Button(login_window, text="Login", command=login)
+    login_button.pack()
 
-    # Determine cardinal direction based on angle
-    if 45 <= centerline_angle < 135:
-        direction_text = "N"
-    elif 135 <= centerline_angle < 225:
-        direction_text = "W"
-    elif 225 <= centerline_angle < 315:
-        direction_text = "S"
-    else:
-        direction_text = "E"
-    print(centerline_angle)
+def adminMode():
+    def viewUsers():
+        admin_password = admin_password_entry.get()
+        displayAllUsers(conn, cursor, admin_password)
+        viewUsers_window.destroy()
 
-    # Convert image to BGR for compatibility with OpenCV
-    output_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    viewUsers_window = tk.Toplevel(root)
 
-    # Overlay text on the image
-    cv2.putText(output_image, direction_text, (int(width / 2), 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+    admin_password_label = tk.Label(viewUsers_window, text="Admin Password:")
+    admin_password_label.pack()
+    admin_password_entry = tk.Entry(viewUsers_window, show="*")
+    admin_password_entry.pack()
 
-    horizon_y = image.shape[0] // 2 + 50
-    left_x_horizon = int(poly_left(horizon_y))
-    right_x_horizon = int(poly_right(horizon_y))
+    viewUsers_button = tk.Button(viewUsers_window, text="View Users", command=viewUsers)
+    viewUsers_button.pack()
 
-    line_image = draw_lines(
-        output_image,
-        [[
-            [left_x_start, max_y, left_x_horizon, horizon_y],
-            [right_x_start, max_y, right_x_horizon, horizon_y],
-            [center_x_start, max_y, center_x_end, min_y]  # Adding centerline
-        ]],
-        thickness=5,
-        outer_color=[255, 0, 255]
-    )
-    return line_image
+# buttons for user interaction
+signup_button = tk.Button(root, text="Sign Up", command=signupMaker)
+signup_button.pack()
 
+login_button = tk.Button(root, text="Log In", command=loginMode)
+login_button.pack()
 
-from moviepy.editor import VideoFileClip
+admin_view_button = tk.Button(root, text="Admin View (display users here)", command=adminMode)
+admin_view_button.pack()
 
-# Open video file
-clip1 = VideoFileClip("Car drive.mp4")
+# start the main event loop
+root.mainloop()
 
-# Define output video dimensions
-output_width = 1280  # specify your desired width
-output_height = 720  # specify your desired height
-
-# Process each frame of the video
-for frame in clip1.iter_frames():
-    try:
-        processed_frame = pipeline(frame)
-        # Resize the processed frame
-        processed_frame = cv2.resize(processed_frame, (output_width, output_height))
-        cv2.imshow('Processed Video', processed_frame)
-        if cv2.waitKey(25) & 0xFF == ord('q'):
-            break
-    except UnboundLocalError:
-        pass
-
-# Release video capture and close all windows
-clip1.reader.close()
-cv2.destroyAllWindows()
+# close the database connection when the application is closed
+close_database(conn)
