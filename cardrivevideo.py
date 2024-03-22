@@ -4,7 +4,7 @@ import numpy as np
 import cv2
 import math
 
-
+# Define function to create a region of interest mask on the image
 def region_of_interest(img, vertices):
     mask = np.zeros_like(img)
     match_mask_color = 255
@@ -12,7 +12,7 @@ def region_of_interest(img, vertices):
     masked_image = cv2.bitwise_and(img, mask)
     return masked_image
 
-
+# Define function to draw lines on the image
 def draw_lines(img, lines, thickness=5, outer_color=[255, 0, 255]):
     line_img = np.zeros(
         (
@@ -39,7 +39,7 @@ def draw_lines(img, lines, thickness=5, outer_color=[255, 0, 255]):
     img = cv2.addWeighted(img, 0.8, line_img, 1.0, 0.0)
     return img
 
-
+# Define the main processing pipeline
 def pipeline(image):
     height = image.shape[0]
     width = image.shape[1]
@@ -48,8 +48,11 @@ def pipeline(image):
         (width / 2, height / 2),
         (width, height),
     ]
+    # Convert image to grayscale
     gray_image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    # Apply Canny edge detection
     cannyed_image = cv2.Canny(gray_image, 100, 200)
+    # Create a region of interest
     cropped_image = region_of_interest(
         cannyed_image,
         np.array(
@@ -57,6 +60,7 @@ def pipeline(image):
             np.int32
         ),
     )
+    # Detect lines using Hough transform
     lines = cv2.HoughLinesP(
         cropped_image,
         rho=6,
@@ -79,6 +83,7 @@ def pipeline(image):
     if lines is None:
         return image  # Return original image if no lines detected
 
+    # Initialize lists to store points of left and right lines
     left_line_x = []
     left_line_y = []
     right_line_x = []
@@ -98,6 +103,7 @@ def pipeline(image):
     min_y = int(image.shape[0] * (3 / 5))
     max_y = int(image.shape[0])
     if left_line_x and left_line_y:
+        # Fit a polynomial to the points of the left line
         poly_left = np.poly1d(np.polyfit(
             left_line_y,
             left_line_x,
@@ -109,6 +115,7 @@ def pipeline(image):
         left_x_start = left_x_end = 0
 
     if right_line_x and right_line_y:
+        # Fit a polynomial to the points of the right line
         poly_right = np.poly1d(np.polyfit(
             right_line_y,
             right_line_x,
@@ -155,6 +162,7 @@ def pipeline(image):
     left_x_horizon = int(poly_left(horizon_y))
     right_x_horizon = int(poly_right(horizon_y))
 
+    # Draw lines on the image
     line_image = draw_lines(
         output_image,
         [[
@@ -167,7 +175,7 @@ def pipeline(image):
     )
     return line_image
 
-
+# Import the video file
 from moviepy.editor import VideoFileClip
 
 # Open video file
