@@ -5,13 +5,12 @@ import threading
 from userlog import UserLog
 import cv2
 from PIL import Image, ImageTk
-from lane_detection import pipeline  # Importing the pipeline function
 
 # read the username from the temporary file
 with open("temp_username.txt", "r") as temp_file:
     username = temp_file.read().strip()
 
-# Defines the whole gui 
+
 class RobotControlApp:
     def __init__(self, root):
         self.root = root
@@ -85,50 +84,116 @@ class RobotControlApp:
         self.video_overlay_thread = threading.Thread(target=self.start_video_stream_overlay)
         self.video_overlay_thread.start()
 
+    # this was an algorithm that I learned from the following website
+    # https://opencv24-python-tutorials.readthedocs.io/en/latest/py_tutorials/py_imgproc/py_houghlines/py_houghlines.html
+    # very informative
+    # this was the main part of the project that actually really scared me, but as you said I just needed to sit back and read the article
+    # and as a result I was able to get this done really quickly
+
     def apply_line_detection(self, frame):
-        # Apply lane detection pipeline from lane_detection.py
-        overlay_frame = pipeline(frame)
+        # first we convert the frame to grayscale
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        # then apply GaussianBlur to reduce noise and improve line detection overall
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+
+        # then we can use Canny edge detector to find edges in the frame
+        edges = cv2.Canny(blurred, 50, 150)
+
+        # lastly we use HoughLinesP to detect lines in the frame
+        lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=50, minLineLength=100, maxLineGap=50)
+
+        # Draw only a limited amount of detected lines
+        line_frame = frame.copy()
+        for i, line in enumerate(lines):
+            if i < 3:  # Draw only the first 100ish lines
+                x1, y1, x2, y2 = line[0]
+                cv2.line(line_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+        # merge the original frame with the line-drawn frame
+        overlay_frame = cv2.addWeighted(frame, 0.8, line_frame, 1, 0)
+
+        # lastly, just return the overlay of everything that we got on line 110
         return overlay_frame
 
+    # okay, this next function is required for basically anything to work
+    # this one is responsible for actually creating the overlay (AKA the meat of the project we were assigned)
+    # note: different from the algorithm, this is actually creating it to put on the client
     def start_video_stream_overlay(self):
+        # open a video capture object (use 0 for the default camera)
         cap = cv2.VideoCapture("http://127.0.0.1:2345/video_feed")  # REPLACE WITH URL TO CAMERA
+
         while True:
+            # read a frame from the video capture object
             ret, frame = cap.read()
             if ret:
+                # apply line detection overlay
+                # from the apply line detection function above
                 overlay_frame = self.apply_line_detection(frame)
+
+                # convert the frame from BGR to RGB
                 rgb_frame = cv2.cvtColor(overlay_frame, cv2.COLOR_BGR2RGB)
+
+                # resize the frame to fit the canvas
                 rgb_frame = cv2.resize(rgb_frame, (300, 300))
+
+                # convert the frame to a Photo-Image format
                 image = Image.fromarray(rgb_frame)
                 photo = ImageTk.PhotoImage(image=image)
+
+                # update the overlay canvas with the new frame
                 self.overlay_canvas.create_image(0, 0, anchor=tk.NW, image=photo)
+
+            # sleep for a short duration to control the frame rate
+            # otherwise it becomes wayyy too choppy for some reason
             self.root.update()
             self.root.after(10)
+
+        # release the video capture object when the window is closed
         cap.release()
 
-
-    # Function to begin video streams, using RGB, etc.
+    # now for the raw videostream
+    # not the overlay
     def start_video_stream(self):
-        cap = cv2.VideoCapture("http://127.0.0.1:2345/video_feed")  # REPLACE WITH URL TO CAMERA
+        # open a video capture object (use 0 for the default camera)
+        cap = cv2.VideoCapture("Car drive.mp4")  # REPLACE WITH URL TO CAMERA
+
         while True:
+            # read a frame from the video capture object
             ret, frame = cap.read()
             if ret:
+                # convert the frame from BGR to RGB
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+                # resize the frame to fit the canvas
                 rgb_frame = cv2.resize(rgb_frame, (600, 400))
+
+                # convert the frame to a PhotoImage format
                 image = Image.fromarray(rgb_frame)
                 photo = ImageTk.PhotoImage(image=image)
+
+                # update the video canvas with the new frame
                 self.video_canvas.create_image(0, 0, anchor=tk.NW, image=photo)
+
+            # sleep for a short duration to control the frame rate
             self.root.update()
             self.root.after(10)
+
+        # release the video capture object when the window is closed
         cap.release()
 
-    # Sends command to identify what the username is
     def send_command(self, command):
+        # log user action before sending the command
         self.user_log.log_action(command)
+
+        # send the command to the robot
         threading.Thread(target=self.send_request, args=(command,)).start()
-    # Sends command to API
+
+    # and as always, actually sending the command to the server
     def send_request(self, command):
         api_url = "http://localhost:4444/control"
         payload = {"command": command}
+
         try:
             response = requests.post(api_url, json=payload)
             if response.status_code == 200:
@@ -138,8 +203,8 @@ class RobotControlApp:
         except requests.RequestException as e:
             print(f"Error sending command: {e}")
 
-# Main loop
+
 if __name__ == '__main__':
-   root = tk.Tk()
-   app = RobotControlApp(root)
-   root.mainloop()
+    root = tk.Tk()
+    app = RobotControlApp(root)
+    root.mainloop()
