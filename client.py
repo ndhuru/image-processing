@@ -1,210 +1,177 @@
-import tkinter as tk
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
 import numpy as np
-import requests
-import threading
-from userlog import UserLog
 import cv2
-from PIL import Image, ImageTk
+import math
 
-# read the username from the temporary file
-with open("temp_username.txt", "r") as temp_file:
-    username = temp_file.read().strip()
+# Define function to create a region of interest mask on the image
+def region_of_interest(img, vertices):
+    mask = np.zeros_like(img)
+    match_mask_color = 255
+    cv2.fillPoly(mask, vertices, match_mask_color)
+    masked_image = cv2.bitwise_and(img, mask)
+    return masked_image
 
-
-class RobotControlApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.geometry("600x600")
-        self.root.title("Robot Control App")
-
-        # create four quadrants
-        self.quadrant1 = tk.Frame(root, bg="gray", width=300, height=300)
-        self.quadrant1.grid(row=0, column=0, rowspan=2, columnspan=2)
-
-        self.quadrant2 = tk.Frame(root, bg="lightgray", width=300, height=300)
-        self.quadrant2.grid(row=0, column=2, rowspan=2, columnspan=2)
-
-        self.quadrant3 = tk.Frame(root, bg="lightgray", width=300, height=300)
-        self.quadrant3.grid(row=2, column=0, rowspan=2, columnspan=2)
-
-        self.quadrant4 = tk.Frame(root, bg="gray", width=300, height=300)
-        self.quadrant4.grid(row=2, column=2, rowspan=2, columnspan=2)
-
-        # create directional buttons, stop, and play buttons in quadrant 2 (top right)
-        button_size = ("Helvetica", 12)
-
-        self.forward_button = tk.Button(self.quadrant2, text="↑", command=lambda: self.send_command("forward"),
-                                        font=button_size)
-        self.forward_button.grid(row=0, column=1)
-
-        self.left_button = tk.Button(self.quadrant2, text="←", command=lambda: self.send_command("left"),
-                                     font=button_size)
-        self.left_button.grid(row=1, column=0)
-
-        self.right_button = tk.Button(self.quadrant2, text="→", command=lambda: self.send_command("right"),
-                                      font=button_size)
-        self.right_button.grid(row=1, column=2)
-
-        self.backward_button = tk.Button(self.quadrant2, text="↓", command=lambda: self.send_command("backward"),
-                                         font=button_size)
-        self.backward_button.grid(row=2, column=1)
-
-        self.stop_button = tk.Button(self.quadrant2, text="⛔", command=lambda: self.send_command("stop"),
-                                     font=button_size, foreground='red')
-        self.stop_button.grid(row=3, column=0, pady=10)
-
-        self.play_button = tk.Button(self.quadrant2, text="▶", command=lambda: self.send_command("play"),
-                                     font=button_size, foreground='green')
-        self.play_button.grid(row=3, column=2, pady=10)
-
-        # bind WASD keys to directional commands
-        root.bind("<w>", lambda event: self.send_command("forward"))
-        root.bind("<a>", lambda event: self.send_command("left"))
-        root.bind("<s>", lambda event: self.send_command("backward"))
-        root.bind("<d>", lambda event: self.send_command("right"))
-        root.bind("<q>", lambda event: self.send_command("stop"))
-
-        # obtained username, so now we need to incorporate it
-        self.user_log = UserLog(root, username=username)
-
-        # videostream label(raw)
-        self.video_canvas = tk.Canvas(root, width=300, height=300, bg="gray")
-        self.video_canvas.grid(row=0, column=0, rowspan=2, columnspan=2)
-
-        # tried threading in order to speed the response time from the api
-        # quick fyi, but I took a backend course when I was 13 and learned a little bit about the threading library
-        self.video_stream_thread = threading.Thread(target=self.start_video_stream)
-        self.video_stream_thread.start()
-
-        # create a label for displaying the video stream with overlay(not raw)
-        self.overlay_canvas = tk.Canvas(root, width=300, height=300, bg="gray")
-        self.overlay_canvas.grid(row=2, column=0, rowspan=2, columnspan=2)
-
-        # start the video stream thread with the overlay in place
-        self.video_overlay_thread = threading.Thread(target=self.start_video_stream_overlay)
-        self.video_overlay_thread.start()
-
-    # this was an algorithm that I learned from the following website
-    # https://opencv24-python-tutorials.readthedocs.io/en/latest/py_tutorials/py_imgproc/py_houghlines/py_houghlines.html
-    # very informative
-    # this was the main part of the project that actually really scared me, but as you said I just needed to sit back and read the article
-    # and as a result I was able to get this done really quickly
-
-    def apply_line_detection(self, frame):
-        # first we convert the frame to grayscale
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-        # then apply GaussianBlur to reduce noise and improve line detection overall
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-
-        # then we can use Canny edge detector to find edges in the frame
-        edges = cv2.Canny(blurred, 50, 150)
-
-        # lastly we use HoughLinesP to detect lines in the frame
-        lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=50, minLineLength=100, maxLineGap=50)
-
-        # Draw only a limited amount of detected lines
-        line_frame = frame.copy()
-        for i, line in enumerate(lines):
-            if i < 3:  # Draw only the first 100ish lines
-                x1, y1, x2, y2 = line[0]
-                cv2.line(line_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-
-        # merge the original frame with the line-drawn frame
-        overlay_frame = cv2.addWeighted(frame, 0.8, line_frame, 1, 0)
-
-        # lastly, just return the overlay of everything that we got on line 110
-        return overlay_frame
-
-    # okay, this next function is required for basically anything to work
-    # this one is responsible for actually creating the overlay (AKA the meat of the project we were assigned)
-    # note: different from the algorithm, this is actually creating it to put on the client
-    def start_video_stream_overlay(self):
-        # open a video capture object (use 0 for the default camera)
-        cap = cv2.VideoCapture("http://127.0.0.1:2345/video_feed")  # REPLACE WITH URL TO CAMERA
-
-        while True:
-            # read a frame from the video capture object
-            ret, frame = cap.read()
-            if ret:
-                # apply line detection overlay
-                # from the apply line detection function above
-                overlay_frame = self.apply_line_detection(frame)
-
-                # convert the frame from BGR to RGB
-                rgb_frame = cv2.cvtColor(overlay_frame, cv2.COLOR_BGR2RGB)
-
-                # resize the frame to fit the canvas
-                rgb_frame = cv2.resize(rgb_frame, (300, 300))
-
-                # convert the frame to a Photo-Image format
-                image = Image.fromarray(rgb_frame)
-                photo = ImageTk.PhotoImage(image=image)
-
-                # update the overlay canvas with the new frame
-                self.overlay_canvas.create_image(0, 0, anchor=tk.NW, image=photo)
-
-            # sleep for a short duration to control the frame rate
-            # otherwise it becomes wayyy too choppy for some reason
-            self.root.update()
-            self.root.after(10)
-
-        # release the video capture object when the window is closed
-        cap.release()
-
-    # now for the raw videostream
-    # not the overlay
-    def start_video_stream(self):
-        # open a video capture object (use 0 for the default camera)
-        cap = cv2.VideoCapture("Car drive.mp4")  # REPLACE WITH URL TO CAMERA
-
-        while True:
-            # read a frame from the video capture object
-            ret, frame = cap.read()
-            if ret:
-                # convert the frame from BGR to RGB
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-                # resize the frame to fit the canvas
-                rgb_frame = cv2.resize(rgb_frame, (600, 400))
-
-                # convert the frame to a PhotoImage format
-                image = Image.fromarray(rgb_frame)
-                photo = ImageTk.PhotoImage(image=image)
-
-                # update the video canvas with the new frame
-                self.video_canvas.create_image(0, 0, anchor=tk.NW, image=photo)
-
-            # sleep for a short duration to control the frame rate
-            self.root.update()
-            self.root.after(10)
-
-        # release the video capture object when the window is closed
-        cap.release()
-
-    def send_command(self, command):
-        # log user action before sending the command
-        self.user_log.log_action(command)
-
-        # send the command to the robot
-        threading.Thread(target=self.send_request, args=(command,)).start()
-
-    # and as always, actually sending the command to the server
-    def send_request(self, command):
-        api_url = "http://localhost:4444/control"
-        payload = {"command": command}
-
-        try:
-            response = requests.post(api_url, json=payload)
-            if response.status_code == 200:
-                print(f"Command '{command}' sent successfully.")
+# Define function to draw lines on the image
+def draw_lines(img, lines, thickness=5, outer_color=[255, 0, 255]):
+    line_img = np.zeros(
+        (
+            img.shape[0],
+            img.shape[1],
+            3
+        ),
+        dtype=np.uint8
+    )
+    img = np.copy(img)
+    if lines is None:
+        return
+    for line in lines:
+        for x1, y1, x2, y2 in line:
+            if x2 == x1:
+                continue  # Skip lines with zero denominator
+            slope = (y2 - y1) / (x2 - x1)
+            if math.fabs(slope) < 0.5:
+                continue
+            if slope <= 0:
+                cv2.line(line_img, (x1, y1), (x2, y2), outer_color, thickness)
             else:
-                print(f"Failed to send command '{command}'.")
-        except requests.RequestException as e:
-            print(f"Error sending command: {e}")
+                cv2.line(line_img, (x1, y1), (x2, y2), outer_color, thickness)
+    img = cv2.addWeighted(img, 0.8, line_img, 1.0, 0.0)
+    return img
 
+# Define the main processing pipeline
+def pipeline(image):
+    height = image.shape[0]
+    width = image.shape[1]
+    region_of_interest_vertices = [
+        (0, height),
+        (width / 2, height / 2),
+        (width, height),
+    ]
+    # Convert image to grayscale
+    gray_image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+    # Apply Canny edge detection
+    cannyed_image = cv2.Canny(gray_image, 100, 200)
+    # Create a region of interest
+    cropped_image = region_of_interest(
+        cannyed_image,
+        np.array(
+            [region_of_interest_vertices],
+            np.int32
+        ),
+    )
+    # Detect lines using Hough transform
+    lines = cv2.HoughLinesP(
+        cropped_image,
+        rho=6,
+        theta=np.pi / 60,
+        threshold=160,
+        lines=np.array([]),
+        minLineLength=40,
+        maxLineGap=25
+    )
 
-if __name__ == '__main__':
-    root = tk.Tk()
-    app = RobotControlApp(root)
-    root.mainloop()
+    # Apply Gaussian blur to grayscale image
+    gray_image = cv2.GaussianBlur(gray_image, (5, 5), 0)
+
+    # Calculate dynamic Canny thresholds
+    median_intensity = np.median(gray_image)
+    lower_threshold = int(max(0, 0.7 * median_intensity))
+    upper_threshold = int(min(255, 1.3 * median_intensity))
+    cannyed_image = cv2.Canny(gray_image, lower_threshold, upper_threshold)
+
+    if lines is None:
+        return image  # Return original image if no lines detected
+
+    # Initialize lists to store points of left and right lines
+    left_line_x = []
+    left_line_y = []
+    right_line_x = []
+    right_line_y = []
+    for line in lines:
+        for x1, y1, x2, y2 in line:
+            slope = (y2 - y1) / (x2 - x1)
+            if math.fabs(slope) < 0.5:
+                continue
+            if slope <= 0:
+                left_line_x.extend([x1, x2])
+                left_line_y.extend([y1, y2])
+            else:
+                right_line_x.extend([x1, x2])
+                right_line_y.extend([y1, y2])
+
+    min_y = int(image.shape[0] * (3 / 5))
+    max_y = int(image.shape[0])
+    if left_line_x and left_line_y:
+        # Fit a polynomial to the points of the left line
+        poly_left = np.poly1d(np.polyfit(
+            left_line_y,
+            left_line_x,
+            deg=1
+        ))
+        left_x_start = int(poly_left(max_y))
+        left_x_end = int(poly_left(min_y))
+    else:
+        left_x_start = left_x_end = 0
+
+    if right_line_x and right_line_y:
+        # Fit a polynomial to the points of the right line
+        poly_right = np.poly1d(np.polyfit(
+            right_line_y,
+            right_line_x,
+            deg=1
+        ))
+        right_x_start = int(poly_right(max_y))
+        right_x_end = int(poly_right(min_y))
+    else:
+        right_x_start = right_x_end = 0
+
+    # Calculate centerline coordinates and angle
+    if left_line_x and right_line_x:
+        center_x_start = (left_x_start + right_x_start) // 2
+        center_x_end = (left_x_end + right_x_end) // 2
+        # Calculate angle of the centerline
+        centerline_angle = np.arctan2(min_y - max_y, center_x_end - center_x_start) * 180 / np.pi
+    else:
+        # Default centerline to face 90 degrees if only one outer line is detected
+        center_x_start = width // 2
+        center_x_end = width // 2
+        centerline_angle = 90
+
+    if centerline_angle < 0:
+        centerline_angle += 180  # Convert negative angles to positive range [0, 180]
+
+    # Determine cardinal direction based on angle
+    if 45 <= centerline_angle < 135:
+        direction_text = "N"
+    elif 135 <= centerline_angle < 225:
+        direction_text = "W"
+    elif 225 <= centerline_angle < 315:
+        direction_text = "S"
+    else:
+        direction_text = "E"
+    print(centerline_angle)
+
+    # Convert image to BGR for compatibility with OpenCV
+    output_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+
+    # Overlay text on the image
+    cv2.putText(output_image, direction_text, (int(width / 2), 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+
+    horizon_y = image.shape[0] // 2 + 50
+    left_x_horizon = int(poly_left(horizon_y))
+    right_x_horizon = int(poly_right(horizon_y))
+
+    # Draw lines on the image
+    line_image = draw_lines(
+        output_image,
+        [[
+            [left_x_start, max_y, left_x_horizon, horizon_y],
+            [right_x_start, max_y, right_x_horizon, horizon_y],
+            [center_x_start, max_y, center_x_end, min_y]  # Adding centerline
+        ]],
+        thickness=5,
+        outer_color=[255, 0, 255]
+    )
+    return line_image
+
